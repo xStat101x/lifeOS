@@ -1,0 +1,22 @@
+# Local-dev Postgres for LifeOS. The server is canonical (spec §4.2/§4.4).
+# `docker compose up -d db` then run migrations + seed against it.
+services:
+  db:
+    image: postgres:16
+    container_name: lifeos-db
+    environment:
+      POSTGRES_USER: lifeos
+      POSTGRES_PASSWORD: lifeos
+      POSTGRES_DB: lifeos
+    ports:
+      - "5432:5432"
+    volumes:
+      - lifeos_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lifeos -d lifeos"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  lifeos_pgdata:
