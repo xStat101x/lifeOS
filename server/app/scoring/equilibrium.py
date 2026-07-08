@@ -6,6 +6,12 @@ rank instead of saturating.
 
 Decay is suspended for a domain on any day with no *active* expectation (all scheduled
 targets paused, or nothing scheduled) so legitimate rest is never punished (§7.3, §7.5).
+
+Optional mass normalization (``cfg.normalize_domain_mass``): decay is scaled by the
+domain's active habit-mass (Σ importance/divisor). At full compliance a domain's daily
+gain also scales with that mass, so the two cancel and the equilibrium LP becomes
+mass-independent (base_lp_swing * perf / decay_rate) — single-habit domains rank the same
+as many-habit ones. Note this makes the effective reclaim rate ``decay_rate * mass``.
 """
 
 from __future__ import annotations
@@ -29,22 +35,28 @@ def update_domain_lp(
     gain_total: float,
     active_expectations: int,
     cfg: ScoringConfig,
+    mass: float = 1.0,
 ) -> LPUpdate:
     if active_expectations <= 0:
         # Rest day for this domain: neither gain nor decay (§7.3).
         return LPUpdate(lp_after=lp_before, decay=0.0, lp_before=lp_before,
                         gain_total=0.0)
-    decay = cfg.decay_rate * max(0.0, lp_before - cfg.lp_floor)
+    mass_factor = mass if cfg.normalize_domain_mass else 1.0
+    decay = cfg.decay_rate * mass_factor * max(0.0, lp_before - cfg.lp_floor)
     lp_after = max(cfg.lp_floor, lp_before + gain_total - decay)
     return LPUpdate(lp_after=lp_after, decay=decay, lp_before=lp_before,
                     gain_total=gain_total)
 
 
-def equilibrium_lp(gain_total_per_active_day: float, cfg: ScoringConfig) -> float:
-    """Closed-form equilibrium: where gain_total == decay == DECAY_RATE*(lp-FLOOR).
+def equilibrium_lp(
+    gain_total_per_active_day: float, cfg: ScoringConfig, mass: float = 1.0
+) -> float:
+    """Closed-form equilibrium: where gain_total == decay.
 
-    Handy for calibration/tests. Assumes a steady per-active-day gain.
+    decay == DECAY_RATE * mass_factor * (lp - FLOOR). Handy for calibration/tests;
+    assumes a steady per-active-day gain. ``mass`` is ignored unless normalization is on.
     """
     if cfg.decay_rate <= 0:
         return float("inf")
-    return cfg.lp_floor + gain_total_per_active_day / cfg.decay_rate
+    mass_factor = mass if cfg.normalize_domain_mass else 1.0
+    return cfg.lp_floor + gain_total_per_active_day / (cfg.decay_rate * mass_factor)

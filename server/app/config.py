@@ -56,6 +56,11 @@ class ScoringConfig:
     # --- §7.3 domain-level equilibrium ---
     decay_rate: float = 0.02              # DECAY_RATE
     lp_floor: float = 0.0                 # FLOOR
+    # When True, scale a domain's decay by its active habit-mass (Σ importance/divisor)
+    # so full-compliance equilibrium is INDEPENDENT of how many habits the domain holds
+    # (single-habit domains rank comparably to many-habit ones). Importance still governs
+    # within-domain gain weighting and how much a miss hurts. TUNABLE (DECISIONS.md).
+    normalize_domain_mass: bool = False
 
     # --- §7.7 tier ladder ---
     lp_per_division: int = 100            # LP_PER_DIVISION
@@ -90,8 +95,13 @@ DEFAULT_SCORING = ScoringConfig()
 
 #: The constants the engine actually runs on (Season-1 "active" defaults; DECISIONS.md).
 #: Lever A: the literal-spec swing/decay leave a disciplined domain's equilibrium far
-#: below the ladder midpoint, which *inverts* the season soft-reset (it would promote
-#: instead of demote). Bumping BASE_LP_SWING + DECAY_RATE lands equilibria on the
-#: mid/upper ladder so the reset demotes correctly and a perfect ~30 days reclaims peak.
-#: These are Season-1 tunables, NOT final — recalibrate after living through one reset.
-ACTIVE_SCORING = replace(DEFAULT_SCORING, base_lp_swing=200.0, decay_rate=0.075)
+#: below the ladder midpoint, which *inverts* the season soft-reset. Plus per-domain mass
+#: normalization so full compliance in ANY domain equilibrates to the same target rank
+#: (base*perf/decay_rate = 175*0.25/0.025 = 1750, solidly mid-Platinum, clear of the
+#: Emerald boundary and both division edges), regardless of habit count. With
+#: normalization the effective decay (reclaim) rate is decay_rate * mass, so decay_rate
+#: is set to 0.025 to keep the ~30-day reclaim on a nutrition-scale (mass~3) domain.
+#: Season-1 tunables, NOT final.
+ACTIVE_SCORING = replace(
+    DEFAULT_SCORING, base_lp_swing=175.0, decay_rate=0.025, normalize_domain_mass=True
+)

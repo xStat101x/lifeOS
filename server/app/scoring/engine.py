@@ -57,6 +57,7 @@ class Engine:
         result = DayResult(day=day_input.day)
         gain_total: dict[str, float] = {d: 0.0 for d in self.domains}
         active: dict[str, int] = {d: 0 for d in self.domains}
+        mass: dict[str, float] = {d: 0.0 for d in self.domains}  # Σ importance/divisor
         completions: dict[str, float] = {}
 
         for hid, obs in day_input.scheduled.items():
@@ -106,6 +107,8 @@ class Engine:
 
             gain_total[spec.domain] += gain
             active[spec.domain] += 1
+            # Habit-mass mirrors the importance weighting used in gain (§7.3 normalization).
+            mass[spec.domain] += (spec.importance * effect.importance_scale) / self.cfg.importance_divisor
             self._baselines.record(hid, completion, timing)
 
             result.targets.append(TargetEval(
@@ -120,7 +123,7 @@ class Engine:
         for d in self.domains:
             upd = update_domain_lp(
                 lp_before=self.lp[d], gain_total=gain_total[d],
-                active_expectations=active[d], cfg=self.cfg,
+                active_expectations=active[d], cfg=self.cfg, mass=mass[d],
             )
             self.lp[d] = upd.lp_after
             result.domains[d] = DomainDayResult(

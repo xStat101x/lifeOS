@@ -144,17 +144,52 @@ Format: **[date] — decision — rationale / where.**
     so disciplined equilibria reach Plat/Emerald and reclaim ~30 days.
   - **(B) Shrink the ladder scale:** cut `LP_PER_DIVISION` (and midpoint/apex) ~10× and
     keep `BASE_LP_SWING` modest — same shape, smaller numbers.
-- **2026-07-08 — RESOLVED: adopted lever A** (owner decision). The engine now runs on
-  `config.ACTIVE_SCORING` = `replace(DEFAULT_SCORING, base_lp_swing=200.0, decay_rate=0.075)`.
+- **2026-07-08 — RESOLVED: adopted lever A** (owner decision), later augmented with mass
+  normalization (next entry). The engine runs on `config.ACTIVE_SCORING`
+  = `replace(DEFAULT_SCORING, base_lp_swing=175.0, decay_rate=0.025, normalize_domain_mass=True)`.
   `DEFAULT_SCORING` is kept unchanged as the literal-spec reference. `Engine`, the sim
-  harness, and `sim.calibration.CALIBRATION_SCORING` all point at `ACTIVE_SCORING`.
-  Verified: equilibrium **Platinum I (2000)** → reset **Platinum IV (1610)** → **95% of
-  peak reclaimed in 18 days, 99% in 39** (~98% at day 30). The season-reclaim behavioral
-  test runs on `ACTIVE_SCORING`; the other five behaviors are asserted on `DEFAULT_SCORING`
-  (they're config-independent).
+  harness, and `sim.calibration.CALIBRATION_SCORING` all point at `ACTIVE_SCORING`. The
+  season-reclaim behavioral test runs on `ACTIVE_SCORING`; the other five behaviors are
+  asserted on `DEFAULT_SCORING` (they're config-independent).
 - **These remain Season-1 tunables, not final** (§25) — recalibrate after living through
   one reset. Lever B (shrink the ladder scale ~10× instead of inflating the swing) stays
   on the table. Run `python -m sim.calibration` to compare DEFAULT vs ACTIVE.
+
+### Per-domain mass normalization (`normalize_domain_mass`)
+
+- **2026-07-08 — Problem:** a domain's equilibrium LP scaled with its total habit-mass
+  (Σ importance/divisor), because `gain_total` grows with the number/importance of habits
+  while decay did not. So single-habit domains settled far lower and dragged the overall
+  average down — full compliance everywhere still read **Silver II** (nutrition Emerald IV
+  vs routines Bronze IV).
+- **Fix:** scale each domain's decay by its active habit-mass
+  (`decay = decay_rate · mass · (lp − floor)`), behind `ScoringConfig.normalize_domain_mass`
+  (default **False** = literal-spec; **True** in `ACTIVE_SCORING`). At full compliance
+  `gain_total ≈ base·perf·mass` and decay ∝ mass, so mass cancels and the equilibrium is
+  **`base·perf/decay_rate`, mass-independent**. Every fully-complied domain now converges
+  to the same target. `base_lp_swing` was nudged 200 → **175** so that target is
+  `175·0.25/0.025` = **1750 LP (Platinum III)** — solidly mid-Platinum, clear of the
+  Emerald boundary (2000) and both division edges (1700/1799), avoiding rank flicker.
+  Overall full-compliance now reads Platinum III instead of Silver II.
+- **Importance still governs within-domain weighting and miss severity** — per-habit
+  `gain` is unchanged (`base · importance/divisor · perf`); normalization only rescales
+  the domain-level decay constant.
+- **Consequence (accepted):** the *effective reclaim rate* is now `decay_rate · mass`, so
+  higher-mass domains reclaim faster. To keep the spec's ~30-day reclaim on a
+  nutrition-scale domain (mass≈3), `decay_rate` was retuned 0.075 → **0.025** (0.025·3 =
+  0.075, the prior reclaim rate). Single-habit domains reclaim proportionally slower;
+  acceptable and documented. TUNABLE.
+- **Before/after (from `python -m sim.calibration`):**
+
+  | domain | before LP (rank) | after LP (rank) |
+  |---|---|---|
+  | nutrition | 2000 (Emerald IV) | 1750 (Platinum III) |
+  | fitness | 1111 (Silver I) | 1750 (Platinum III) |
+  | sleep | 667 (Bronze II) | 1750 (Platinum III) |
+  | routines | 444 (Bronze IV) | 1750 (Platinum III) |
+  | **overall** | **1056 (Silver II)** | **1750 (Platinum III)** |
+
+  (Before = pre-normalization ACTIVE, base 200 / decay 0.075. After = current ACTIVE.)
 
 ### Still deferred (step 3 scope boundary)
 
