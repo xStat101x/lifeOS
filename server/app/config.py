@@ -12,7 +12,7 @@ Two distinct things live here:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -62,12 +62,21 @@ class ScoringConfig:
     # Midpoint the season soft-reset compresses toward (§7.8). Iron I..Diamond IV is
     # 7 tiers x 4 divisions x 100 = 2800 LP; midpoint = 1400. TUNABLE (DECISIONS.md).
     ladder_midpoint_lp: float = 1400.0
+    # Apex thresholds (single-player => fixed LP, §7.7). Master begins where the
+    # divisioned ladder ends (7 tiers x 400). All TUNABLE (DECISIONS.md).
+    apex_master_lp: float = 2800.0
+    apex_grandmaster_lp: float = 3200.0
+    apex_challenger_lp: float = 3600.0
 
     # --- §7.8 seasons ---
     reset_compression: float = 0.35       # new_lp = MID + (old-MID)*compression
 
     # --- §8 XP / rewards / forgiveness ---
-    xp_per_log: int = 10                  # XP_PER_LOG
+    xp_per_log: int = 10                  # XP_PER_LOG (any qualifying log)
+    xp_bonus_overtime: int = 5            # extra XP when completion exceeds target (§7.5, §8.1)
+    # Increasing level curve: XP to advance from level L to L+1 = xp_level_base * L.
+    xp_level_base: int = 100              # TUNABLE (spec §8.2 "increasing thresholds")
+    reward_token_every_levels: int = 10   # §8.2 reward token cadence
     mulligan_cap_per_month: int = 3       # MULLIGAN_CAP
     mulligan_cost_ladder: tuple[int, ...] = (200, 400, 800)  # escalating cost
 
@@ -75,4 +84,14 @@ class ScoringConfig:
     weight_smoothing_days: int = 7        # WEIGHT_SMOOTHING (7-day EMA)
 
 
+#: Literal-spec constants (§7–§9 defaults). Kept as the reference point; the engine does
+#: NOT run on these by default — see ``ACTIVE_SCORING``.
 DEFAULT_SCORING = ScoringConfig()
+
+#: The constants the engine actually runs on (Season-1 "active" defaults; DECISIONS.md).
+#: Lever A: the literal-spec swing/decay leave a disciplined domain's equilibrium far
+#: below the ladder midpoint, which *inverts* the season soft-reset (it would promote
+#: instead of demote). Bumping BASE_LP_SWING + DECAY_RATE lands equilibria on the
+#: mid/upper ladder so the reset demotes correctly and a perfect ~30 days reclaims peak.
+#: These are Season-1 tunables, NOT final — recalibrate after living through one reset.
+ACTIVE_SCORING = replace(DEFAULT_SCORING, base_lp_swing=200.0, decay_rate=0.075)

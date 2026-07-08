@@ -36,10 +36,9 @@ Format: **[date] — decision — rationale / where.**
 
 ### Spec / repo notes
 
-- **2026-07-07 — Spec path mismatch.** `CLAUDE.md` says the source of truth is
-  `docs/SPEC.md`; the file is actually `docs/LifeOS-Specification.md`. Left `CLAUDE.md`
-  untouched (it holds invariants — not editing without owner sign-off). **Open:** rename
-  the spec to `docs/SPEC.md` or fix the pointer in `CLAUDE.md`.
+- **2026-07-07 — Spec path mismatch → RESOLVED.** `CLAUDE.md` points to `docs/SPEC.md`;
+  the file had been `docs/LifeOS-Specification.md`. Renamed to `docs/SPEC.md` (owner
+  approved), so the pointer now resolves. `PHASE-1-KICKOFF.md` also moved to repo root.
 - Spec has no §12 (numbering jumps §11 → §13). Cosmetic; ignored.
 
 ### Filled-in values (spec left "TUNABLE"/placeholder without a number)
@@ -91,7 +90,75 @@ Format: **[date] — decision — rationale / where.**
 ### Deferred to a later step/phase (safe per §25)
 
 - **`floating_count` schedule** ("3×/week any day", §11): schema supports it
-  (`schedule_type` + `schedule_config`), but eligibility + weekly-shortfall scoring is a
-  step-3 engine decision, not yet implemented. No seed habit uses it.
+  (`schedule_type` + `schedule_config`), but eligibility + weekly-shortfall scoring is
+  not yet implemented in the engine. No seed habit uses it. Still deferred.
 - Severe-Sick representation (see above).
-- LP↔tier/division ladder constants beyond `ladder_midpoint_lp` (step 3).
+
+---
+
+## Phase 1 — Scoring engine (step 3)
+
+### Architecture
+
+- **2026-07-07 — Pure engine realized in `app/scoring/`** — no DB/ORM imports; operates
+  on dataclasses (`types.py`) + `ScoringConfig`. 10 modules: performance (§7.2), baseline
+  (§7.2), day_modes (§9), equilibrium (§7.3), ladder (§7.7), seasons (§7.8), forgiveness
+  (§8.3), xp (§8), engine (orchestration/replay). 53 unit + behavioral tests, all green,
+  zero external services. Sim harness in `sim/` (`python -m sim.harness`).
+- **Systems score as quantitative habits** (§7.4): passed to the engine as
+  `HabitSpec(is_system=True, kind='quantitative')` with value=steps_done, target=steps_total.
+  No separate code path.
+- **Decay suspended whenever a domain has 0 active expectations that day** — i.e. all
+  scheduled targets paused *or nothing scheduled* (§7.3, §7.5). So a domain only decays on
+  days it actually expected something; planned rest days never bleed LP.
+- **Timing weights are NOT renormalized** when timing is absent/neutralized — the timing
+  term simply drops to 0 (spec §7.2 is explicit: `W_TIMING_eff = 0`).
+- **Grace window** (`age < NEW_HABIT_GRACE_DAYS`) drives BOTH the low-anchor baseline and
+  the `gain = max(0, gain)` clamp, so early days can only help.
+- **Mulligan modeled at domain-day granularity** (§8.3): `neutralize_domain_day` erases a
+  losing day to 0; `clamp_never_win` caps a retroactively re-scored day at ≤0. Cost ladder
+  (200/400/800) + monthly cap enforced by `mulligan_cost`. Never yields a win.
+- **XP level curve:** advancing L→L+1 costs `xp_level_base * L` (=100·L; increasing per
+  §8.2). Reward token every 10 levels. TUNABLE.
+- **Apex thresholds** Master 2800 / GM 3200 / Challenger 3600 (`ScoringConfig`, TUNABLE).
+- **`expect_more` currently only flags bonus-eligibility** (ModeEffect.expect_more); it
+  does not yet auto-raise the target. Raising the bar needs a factor/params convention —
+  **deferred** (no seed mode uses expect_more).
+
+### ⚠ Calibration finding — spec-default constants are internally inconsistent
+
+- **2026-07-07 — The spec's default scoring constants cannot meet the spec's own
+  season-reclaim target, and invert the reset.** With `BASE_LP_SWING=15`,
+  `DECAY_RATE=0.02`, `LP_PER_DIVISION=100`, `midpoint=1400`: a disciplined 2-habit domain
+  (protein imp5 + calories imp4, sustained perfect) equilibrates at only **~562 LP
+  (Bronze III)** — *far below* the 1400 ladder midpoint. Consequences:
+  1. The season soft-reset "compress toward midpoint" (§7.8) *raises* sub-midpoint LP
+     (562 → 1107), i.e. it **promotes** on reset instead of demoting — the opposite of
+     the "Diamond drops to Gold" intent.
+  2. Reclaim is meaningless, and with the slow decay (time-constant 50 days) any real
+     re-climb would take ~150 days, not ~30.
+- **This is exactly the Season-1 calibration the spec flags (§7.8, §25)** — surfaced to
+  the owner, not silently patched.
+- **Two levers (owner's call in Season 1):**
+  - **(A) Inflate the LP economy:** raise `BASE_LP_SWING` ~10–13× and `DECAY_RATE`→~0.075
+    so disciplined equilibria reach Plat/Emerald and reclaim ~30 days.
+  - **(B) Shrink the ladder scale:** cut `LP_PER_DIVISION` (and midpoint/apex) ~10× and
+    keep `BASE_LP_SWING` modest — same shape, smaller numbers.
+- **2026-07-08 — RESOLVED: adopted lever A** (owner decision). The engine now runs on
+  `config.ACTIVE_SCORING` = `replace(DEFAULT_SCORING, base_lp_swing=200.0, decay_rate=0.075)`.
+  `DEFAULT_SCORING` is kept unchanged as the literal-spec reference. `Engine`, the sim
+  harness, and `sim.calibration.CALIBRATION_SCORING` all point at `ACTIVE_SCORING`.
+  Verified: equilibrium **Platinum I (2000)** → reset **Platinum IV (1610)** → **95% of
+  peak reclaimed in 18 days, 99% in 39** (~98% at day 30). The season-reclaim behavioral
+  test runs on `ACTIVE_SCORING`; the other five behaviors are asserted on `DEFAULT_SCORING`
+  (they're config-independent).
+- **These remain Season-1 tunables, not final** (§25) — recalibrate after living through
+  one reset. Lever B (shrink the ladder scale ~10× instead of inflating the swing) stays
+  on the table. Run `python -m sim.calibration` to compare DEFAULT vs ACTIVE.
+
+### Still deferred (step 3 scope boundary)
+
+- `floating_count` scheduling (above), severe-Sick, `expect_more` target-raising.
+- DB adapter: loading logs/config from Postgres into the engine and persisting
+  `day_evaluations` / `rank_state` / `xp_ledger`. The engine is DB-free by design; the
+  adapter is a later slice (not required for the tested scoring math).
