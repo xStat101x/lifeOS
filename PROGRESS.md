@@ -21,17 +21,17 @@ DB on the `lifeos-db` container.
   persists `day_evaluations` / `rank_state` / `xp_ledger` / `account_level` / `rank_peaks`
   as a recomputable cache (§20 inv. 4). Idempotent.
 - **API** (`app/api/main.py`) — `GET /health`, `POST /logs`, `POST /day-close/{day}`,
-  `GET /rank`, `POST|GET /day-assignments` (Day Modes).
+  `GET /rank`, `POST|GET /day-assignments` (Day Modes), `POST /mulligans` (§8.3 spend).
 
 ## Remaining build slices (ordered, per SPEC §23)
 
 ### Slice 1 — Foundation + core loop (finish)
 Server core is done. Left:
-- [ ] **Day Modes over API** — apply/list `day_assignments`; day-close honors overrides;
-      §9.1 anti-exploit (retroactive rejected pending mulligan). *(in progress)*
-- [ ] **Mulligan spend API** — §8.3 forgiveness: spend a mulligan to neutralize a past
-      day or apply a mode retroactively (engine math + `mulligans` table exist; wire the
-      cost ladder/cap + the retroactive path).
+- [x] **Day Modes over API** — apply/list `day_assignments`; day-close honors overrides;
+      §9.1 anti-exploit (retroactive rejected without a mulligan).
+- [x] **Mulligan spend API** — §8.3: `POST /mulligans` neutralizes a past day or applies a
+      mode retroactively; server-side cost ladder + monthly cap; XP lifetime vs spendable;
+      never a win. Unlocks the retroactive path the day-assignments endpoint gates.
 - [ ] **Food quick-log API** — manual + one-tap re-log; photo endpoint stubbed (agent is
       Slice 3).
 - [ ] **iOS app** — Swift/SwiftUI shell, on-device SQLite (GRDB) mirror, sync queue,

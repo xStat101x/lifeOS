@@ -19,6 +19,7 @@ from app.adapter.config_loader import World
 from app.config import ACTIVE_SCORING, ScoringConfig
 from app.models import AccountLevel, DayEvaluation, RankPeak, RankState, Season, XPLedger
 from app.scoring.engine import DayInput, Engine
+from app.scoring.forgiveness import clamp_never_win, neutralize_domain_day
 from app.scoring.ladder import lp_to_rank
 from app.scoring.xp import level_for_total_xp
 
@@ -58,6 +59,19 @@ def _replay(world: World, cfg: ScoringConfig, upto: date):
         specs, obs = world.specs_and_obs(day)
         eng.habits = specs  # per-day specs carry that day's phase targets (§11)
         res = eng.process_day(DayInput(day=day, scheduled=obs, mode=world.day_mode(day)))
+
+        # §8.3 forgiveness (a mulligan is part of the recomputable source, like logs):
+        #   retroactive mode -> re-scored under the mode, then clamped so it can NEVER be a
+        #     win (best case neutral); neutralize -> the day's losses erased to 0, real
+        #     gains kept. Never manufactures a win (§0 rule 3, CLAUDE.md invariant 3).
+        if world.is_retroactive(day):
+            for dkey in eng.domains:
+                dd = res.domains[dkey]
+                eng.lp[dkey] = dd.lp_before + clamp_never_win(dd.lp_change)
+        elif world.has_mulligan(day):
+            for dkey in eng.domains:
+                dd = res.domains[dkey]
+                eng.lp[dkey] = dd.lp_before + neutralize_domain_day(dd.lp_change)
 
         if season is not None:  # bank the day's LP into the season's running peak
             for dkey in eng.domains:

@@ -273,3 +273,40 @@ Format: **[date] — decision — rationale / where.**
 - **Tests:** 6 new (`test_daymode_api.py`) — apply/list/replace, retroactive 409, unknown
   mode 404, and the three override behaviors. **70 tests total green.**
 - **`PROGRESS.md` added** at repo root: current state + ordered remaining slices per §23.
+
+---
+
+## Phase 1 — Mulligan-spend over the API (§8.3, invariant 3)
+
+- **2026-07-17 — A mulligan is recomputable source data.** `POST /mulligans` records a
+  `Mulligan` row (and, for the mode path, a retroactive `day_assignment`); the *forgiveness
+  itself* is applied in the **replay** (`day_close`), which reads mulligans just like logs.
+  So the ladder stays re-computable from `logs + config + mulligans` (§20 inv. 4) — proven
+  by `test_mulligan_survives_cache_wipe_recompute` (wipe the cache, re-close, forgiveness
+  reappears).
+- **Two forgiveness paths, both incapable of a win** (reuse the engine's helpers):
+  - **Neutralize** (`mode_id` omitted) → `neutralize_domain_day` = `max(0, day_change)`
+    per domain: the day's *losses* are erased to 0, real gains kept. Never manufactures LP.
+  - **Retroactive mode** (`mode_id` set) → the day is re-scored under the mode, then
+    `clamp_never_win` = `min(0, day_change)`: reduced expectations can lower the loss but
+    the day is capped at neutral, so a retroactive reclassification can **never** produce a
+    win (`test_retroactive_mode_only_when_paid_and_never_a_win`).
+- **Retroactive mode is allowed ONLY via a paid mulligan.** `POST /day-assignments` still
+  409s a direct past-day application; the mulligan endpoint is the paid gate that creates
+  the `is_retroactive` assignment.
+- **Cost ladder + cap enforced server-side** (`forgiveness.mulligan_cost`): 200/400/800 by
+  the Nth mulligan; **cap 3/month**, counted by the **mulliganed day's calendar month**
+  (decision — §8.3 says "3/month"); the 4th → 409. Not just client-side.
+- **XP split — lifetime vs spendable** (resolves §8's "permanent AND spendable"): *lifetime
+  earned* is permanent, drives account level, and is **never lowered by spending**;
+  *spendable* = earned − Σ mulligan costs. `account_level` comes from lifetime; affordability
+  checks spendable; insufficient → 409. `xp_lifetime` = latest day-close ledger balance;
+  `xp_spent` = Σ `mulligans.xp_cost` (so wiping the ledger can't lose the spend record).
+- **Past-day only:** `effective_day >= today` → 422 (apply a mode for free instead). "Today"
+  is the same `get_today` dependency (pinned per test).
+- **Propagation:** spending re-closes the latest scored day so the forgiveness flows into
+  `rank_state`. `day_evaluations` stay the *raw* per-day record; `rank_state`/XP reflect
+  forgiveness; the authoritative recompute is always the replay from source.
+- **Tests:** 6 new (`test_mulligan_api.py`) — neutralize a losing day, monthly-cap blocks
+  the 4th, retroactive-mode-only-when-paid + never-a-win, insufficient XP, today/future
+  rejected, cache-wipe recompute. **76 tests total green.**

@@ -43,12 +43,17 @@ def _rs_dict(rs: RankState) -> dict:
 
 
 def _xp(session: Session) -> dict:
-    latest = session.query(XPLedger).order_by(
-        XPLedger.effective_day.desc().nullslast(), XPLedger.created_at.desc()
-    ).first()
+    """XP has two faces (§8): lifetime *earned* drives account level and is permanent
+    (never reduced by spending); *spendable* = earned − mulligan spends (§8.3)."""
+    from app.adapter.mulligan import xp_lifetime, xp_spent
+
     account = session.query(AccountLevel).first()
+    earned = xp_lifetime(session)
+    spent = xp_spent(session)
     return {
-        "total": latest.balance if latest else 0,
+        "total": earned,                 # lifetime earned (drives level)
+        "spendable": earned - spent,     # available to spend on mulligans/rewards
+        "spent": spent,
         "level": account.level if account else 1,
         "xp_into_level": account.xp_into_level if account else 0,
     }

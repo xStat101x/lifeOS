@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.adapter.day_close import close_day
+from app.adapter.mulligan import MulliganError, spend_mulligan
 from app.adapter.queries import current_rank
 from app.db import get_session
 from app.models import DayAssignment, DayMode as DayModeModel, Log, User
@@ -158,3 +159,32 @@ def list_day_assignments(
                          mode_name=names.get(r.day_mode_id, ""), source=r.source)
         for r in rows
     ]
+
+
+# --- Mulligans (§8.3) -------------------------------------------------------------
+
+class MulliganIn(BaseModel):
+    effective_day: date
+    # None => neutralize the day's loss; set => apply this Day Mode retroactively.
+    mode_id: uuid.UUID | None = None
+
+
+@app.post("/mulligans", status_code=201)
+def spend(
+    body: MulliganIn,
+    session: Session = Depends(get_session),
+    today: date = Depends(get_today),
+) -> dict:
+    try:
+        r = spend_mulligan(session, effective_day=body.effective_day, today=today,
+                           mode_id=body.mode_id)
+    except MulliganError as e:
+        raise HTTPException(e.status, e.detail)
+    return {
+        "effective_day": r.effective_day.isoformat(),
+        "kind": r.kind,
+        "mode": r.mode_name,
+        "xp_cost": r.xp_cost,
+        "xp_spendable_after": r.xp_spendable_after,
+        "rank": r.rank,
+    }

@@ -22,6 +22,7 @@ from app.models import (
     Habit,
     HabitPhase,
     Log,
+    Mulligan,
     Season,
     System,
     SystemStep,
@@ -70,6 +71,8 @@ class World:
     steps_by_system: dict[uuid.UUID, list[SystemStep]]
     modes_by_id: dict[uuid.UUID, tuple[DayModeModel, list[DayModeOverride]]]
     assignment_by_day: dict[date, uuid.UUID]
+    retroactive_days: set[date]           # days whose mode was applied via a paid mulligan
+    mulligan_days: set[date]              # days a mulligan was spent on (§8.3)
     seasons: list[Season]
     logs_by_day: dict[date, list[Log]]
 
@@ -109,6 +112,7 @@ class World:
             modes_by_id[m.id] = (m, ovs)
 
         assignment_by_day: dict[date, uuid.UUID] = {}
+        retroactive_days: set[date] = set()
         for a in (
             session.query(DayAssignment)
             .filter(DayAssignment.deleted_at.is_(None))
@@ -116,6 +120,15 @@ class World:
             .all()
         ):
             assignment_by_day[a.effective_day] = a.day_mode_id  # last write wins
+            if a.is_retroactive:
+                retroactive_days.add(a.effective_day)
+
+        mulligan_days = {
+            m.effective_day
+            for m in session.query(Mulligan)
+            .filter(Mulligan.deleted_at.is_(None), Mulligan.effective_day <= upto)
+            .all()
+        }
 
         seasons = (
             session.query(Season)
@@ -137,9 +150,15 @@ class World:
             domain_weight=domain_weight, habits=habits,
             phases_by_habit=phases_by_habit, systems=systems,
             steps_by_system=steps_by_system, modes_by_id=modes_by_id,
-            assignment_by_day=assignment_by_day, seasons=seasons,
-            logs_by_day=logs_by_day,
+            assignment_by_day=assignment_by_day, retroactive_days=retroactive_days,
+            mulligan_days=mulligan_days, seasons=seasons, logs_by_day=logs_by_day,
         )
+
+    def has_mulligan(self, day: date) -> bool:
+        return day in self.mulligan_days
+
+    def is_retroactive(self, day: date) -> bool:
+        return day in self.retroactive_days
 
     # --- domains actually scored (have >=1 active habit or system) -------------
     def scored_domain_keys(self) -> list[str]:
