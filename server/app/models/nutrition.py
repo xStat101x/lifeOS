@@ -1,4 +1,4 @@
-"""Nutrition subsystem (spec §6.8, §14). Inert in Phase 1 (agent stubbed later)."""
+"""Nutrition capture and meal memory (spec §6.8, §14); vision agent stubbed."""
 
 from __future__ import annotations
 

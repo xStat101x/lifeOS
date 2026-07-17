@@ -61,13 +61,16 @@ def db(provision_db):
 
     from app.db import SessionLocal
     from app.models import (
-        AccountLevel, DayAssignment, DayEvaluation, Log, Mulligan, RankPeak, RankState,
-        Season, XPLedger,
+        AccountLevel, DayAssignment, DayEvaluation, Log, Meal, MealTemplate, Mulligan,
+        RankPeak, RankState, Season, XPLedger,
     )
 
     session = SessionLocal()
     # order matters: clear rank_state/rank_peaks (FK -> seasons) before seasons
-    for model in (Log, DayEvaluation, RankState, RankPeak, XPLedger, DayAssignment, Mulligan):
+    for model in (
+        Log, Meal, MealTemplate, DayEvaluation, RankState, RankPeak, XPLedger,
+        DayAssignment, Mulligan,
+    ):
         session.query(model).delete()
     session.query(Season).delete()
     session.add(Season(name="Season 1", start_day=date(2026, 8, 20),

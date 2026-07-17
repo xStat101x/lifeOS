@@ -1,8 +1,7 @@
-"""Minimal FastAPI surface for the Phase-1 adapter slice (spec §4.2).
+"""FastAPI surface for the Phase-1 server core (spec §4.2).
 
-Three endpoints plus health: log an event, close a day (score + persist), read rank/XP.
-Deep clients (iOS/web) come in later phases; this is enough to drive the engine
-end-to-end against Postgres.
+Habit logs, day-close/rank, Day Modes, mulligans, and food quick-log drive the core loop
+end-to-end against Postgres. Deep iOS/web clients come in later phases.
 
     uvicorn app.api.main:app --reload
 """
@@ -19,10 +18,12 @@ from sqlalchemy.orm import Session
 from app.adapter.day_close import close_day
 from app.adapter.mulligan import MulliganError, day_was_scored, spend_mulligan
 from app.adapter.queries import current_rank
+from app.api.nutrition import router as nutrition_router
 from app.db import get_session
 from app.models import DayAssignment, DayMode as DayModeModel, Log, User
 
 app = FastAPI(title="LifeOS", version="0.1.0")
+app.include_router(nutrition_router)
 
 
 def get_today() -> date:

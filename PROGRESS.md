@@ -3,14 +3,14 @@
 High-signal map of where the build is and what's next. Details live in `DECISIONS.md`
 and `docs/SPEC.md` (§23 is the build sequence). This file is the orientation, not a log.
 
-## Current state — Phase 1 server core + invariant hardening (pending review)
+## Current state — Phase 1 food quick-log API
 
-Committed core is at `e23fabd`; the invariant-hardening follow-up is implemented and
-awaiting owner review before commit. Run `docker compose up -d db` then `pytest`. Pure
-scoring tests need no DB; integration tests use a throwaway `lifeos_test` DB on the
-`lifeos-db` container.
+The base before this slice was committed core + invariant hardening at `301d761`. The
+server-side food quick-log slice is implemented. Run `docker compose up -d db` then
+`pytest`. Pure scoring tests need no DB; integration tests use a throwaway `lifeos_test`
+DB on the `lifeos-db` container.
 
-Current verification: **81 tests green** (58 pure + 23 integration/API); one pre-existing
+Current verification: **86 tests green** (58 pure + 28 integration/API); one pre-existing
 Starlette/httpx deprecation warning.
 
 - **Data model + migration** — full spec §6 schema (33 tables), Alembic (`migrations/`).
@@ -25,11 +25,14 @@ Starlette/httpx deprecation warning.
   persists `day_evaluations` / `rank_state` / `xp_ledger` / `account_level` / `rank_peaks`
   as a recomputable cache (§20 inv. 4). Idempotent.
 - **API** (`app/api/main.py`) — `GET /health`, `POST /logs`, `POST /day-close/{day}`,
-  `GET /rank`, `POST|GET /day-assignments` (Day Modes), `POST /mulligans` (§8.3 spend).
-- **Invariant hardening (pending review)** — season resets never promote; already-scored
+  `GET /rank`, `POST|GET /day-assignments` (Day Modes), `POST /mulligans` (§8.3 spend),
+  `POST /meals`, `POST|GET /meal-templates`, and template re-log with portion scaling.
+- **Invariant hardening** — season resets never promote; already-scored
   days can be reclassified only through the paid/never-win mulligan path; replay respects
-  target expectation windows and includes silent scheduled days. Each has a regression
-  test that failed against `e23fabd` before the fix.
+  target expectation windows and includes silent scheduled days.
+- **Food quick-log** — manual/voice/pre-computed-photo capture persists
+  meals and canonical macro logs; explicit templates round-trip; re-log scales calories
+  and protein by ×0.5–×2; optional client UUID retries do not duplicate macro logs.
 
 ## Remaining build slices (ordered, per SPEC §23)
 
@@ -42,8 +45,8 @@ Server core is done. Left:
       never a win. Unlocks the retroactive path the day-assignments endpoint gates.
 - [x] **Rank invariant hardening** — reset never promotes; scored-day modes require the
       paid path; historical replay honors target expectation windows.
-- [ ] **Food quick-log API** — manual + one-tap re-log; photo endpoint stubbed (agent is
-      Slice 3).
+- [x] **Food quick-log API** — manual + one-tap template re-log with honest portion
+      scaling; photo capture accepts pre-computed macros behind a Slice-3 resolver seam.
 - [ ] **iOS app** — Swift/SwiftUI shell, on-device SQLite (GRDB) mirror, sync queue,
       on-device scoring at day-close. *(native; separate track)*
 

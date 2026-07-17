@@ -354,8 +354,39 @@ Format: **[date] — decision — rationale / where.**
 - **Config validation follow-up:** missing/nonpositive quantitative targets and unchecked
   negative Day Mode factors can manufacture invalid completion/gain behavior. Schedule
   validation with the Day Mode/config editing surface.
-- **Phase-2 iOS sync work (grouped):** creation APIs must accept client-generated UUIDs
-  and expose sync timestamps/deletion state; retries need UUID dedupe semantics; logical
-  cache keys need database uniqueness constraints so concurrent day-close retries remain
-  idempotent; and log ingestion must validate target references, kinds, units, sources,
-  and value semantics instead of acknowledging unusable or dimensionally mixed events.
+- **Phase-2 iOS sync work (grouped):** remaining creation APIs must accept client-generated
+  UUIDs and expose sync timestamps/deletion state (food capture now accepts/dedupes client
+  UUIDs); retries need UUID dedupe semantics; logical cache keys need database uniqueness
+  constraints so concurrent day-close retries remain idempotent; and generic log ingestion
+  must validate target references, kinds, units, sources, and value semantics instead of
+  acknowledging unusable or dimensionally mixed events.
+
+---
+
+## Phase 1 — Food quick-log API (§6.8, §14)
+
+- **2026-07-17 — Meals are the capture record; paired habit logs are the scoring bridge.**
+  `POST /meals` persists one `meals` row and atomically emits calorie + protein `logs`
+  against the Nutrition habits resolved from the active phase units (`kcal` and `g`). This
+  keeps day-close unchanged and preserves the `logs + config` deterministic replay source;
+  each derived log carries `meal_id`, macro, capture source, template id, and portion
+  multiplier in `meta`.
+- **2026-07-17 — One capture shape for manual, voice, and future vision.** The API accepts
+  `source='manual'|'voice'|'photo'`. `MacroResolver` is the interface boundary; the current
+  `PrecomputedMacroResolver` requires calories/protein for photo input and makes no model
+  call. Slice 3 can replace the resolver with a vision-backed implementation without
+  reshaping the endpoint or persistence service.
+- **2026-07-17 — Template re-log scales stored macros before persistence.**
+  `POST /meal-templates/{id}/relog` accepts a `portion_multiplier` constrained to ×0.5–×2,
+  writes the scaled calories/protein to the meal and scoring logs, and increments
+  `tap_count`/`last_used`. Template learning/upsert heuristics remain deferred to Slice 3;
+  explicit create/list/re-log is sufficient meal memory here.
+- **2026-07-17 — Client UUIDs adopted where cheap.** Meal creation, template creation, and
+  template re-log accept optional client UUIDs. Retrying the same meal UUID returns the
+  existing row without duplicating its macro logs or template tap count. The broader sync
+  conflict/timestamp contract remains scheduled with Phase-2 iOS sync.
+- **Endpoints:** `POST /meals`, `POST|GET /meal-templates`,
+  `POST /meal-templates/{template_id}/relog`.
+- **Tests:** 5 container integration tests cover manual capture → nutrition completion,
+  multiple meals summing toward daily targets, UUID retry dedupe, template round-trip,
+  ×1.5 portion scaling, and the pre-computed photo stub. **86 tests total green.**
