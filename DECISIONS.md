@@ -194,6 +194,55 @@ Format: **[date] — decision — rationale / where.**
 ### Still deferred (step 3 scope boundary)
 
 - `floating_count` scheduling (above), severe-Sick, `expect_more` target-raising.
-- DB adapter: loading logs/config from Postgres into the engine and persisting
-  `day_evaluations` / `rank_state` / `xp_ledger`. The engine is DB-free by design; the
-  adapter is a later slice (not required for the tested scoring math).
+
+---
+
+## Phase 1 — Postgres↔engine adapter
+
+- **2026-07-08 — Adapter wraps the pure engine unchanged** (`app/adapter/`). The engine
+  in `app/scoring/` was not modified. `config_loader.World` loads config + logs;
+  `day_close.close_day` replays + persists; `queries.current_rank` reads back. Per-day
+  phase targets (§11) are supplied by reassigning the engine's public `habits` dict before
+  each `process_day` — no engine change needed.
+- **Day-close = full deterministic replay** from `history_start` (earliest log ≤ target
+  day) through the target day, reconstructing baselines/LP/XP purely from `logs + config`.
+  The persisted rows are therefore a **recomputable cache** (§20 invariant 4): wiping
+  `day_evaluations`/`rank_state`/`xp_ledger` and re-closing reproduces identical values
+  (proven by `test_recomputable_from_logs_only`).
+- **Idempotency:** `day_evaluations` for the day are hard-deleted then re-inserted (a pure
+  cache); `xp_ledger` keeps **one row per (day, 'day_close')**, upserted; `rank_state`
+  upserts per (scope, scope_id, season); `account_level` upserts. Re-running a close is a
+  no-op on state (`test_day_close_is_idempotent`).
+- **Config source is `ACTIVE_SCORING`** (not yet stored in the DB). Persisting the active
+  config/version is a later concern; noted so scoring stays reproducible.
+- **Domains with no scored targets are omitted** from ranking (Finance in Phase 1 has no
+  habits/systems) — they'd otherwise sit at 0 LP and drag `overall`. They appear once they
+  own a habit/system. `overall` = weighted avg over scored domains using `domains.weight`.
+- **Scheduling in the loader** (§11): `daily` / `weekdays` / `specific_days`. A
+  **scheduled-but-unlogged** target is scored as a **miss** (completion 0), not skipped
+  (`test_scheduled_but_unlogged_is_a_miss_not_absent`). `floating_count` is treated as
+  unscheduled (deferred).
+- **Systems** are scheduled daily while active and scored as a quantitative target
+  (`steps_done/steps_total`); `steps_done` = count of distinct `system_step` logs that day
+  (or a direct `system` log's `value`).
+- **Observations from logs:** quantitative habit value = **sum** of that day's logs for it;
+  binary = any log ⇒ done. **Timing** uses `log.meta['timing_in_window']` if present, else
+  the log's wall-clock `logged_at` vs the window (a full timezone pass is deferred, §10).
+- **Season soft-reset is applied during replay** at a season boundary, and **`rank_peaks`
+  is banked as the replay crosses days** (§7.8). Peaks are tracked per (season, scope) as a
+  running high-water LP during the replay — not re-derived on the fly — so an ending
+  season's pre-reset peak is captured exactly and stays correct even if the replay is later
+  optimized. `_upsert_peak` is monotonic (never lowers a banked peak), so out-of-order
+  closes can't erase one; a full recompute from wiped logs reproduces the true max
+  (`test_season_reset_banks_peak_and_survives_recompute`). Both `domain` and `overall`
+  scopes are banked.
+- **`day_evaluations.decay`/`lp_change` are domain-level values replicated** onto each of
+  that domain's target rows (the table is per-target; decay is per-domain, §7.3).
+- **Endpoints** (`app/api/main.py`, `uvicorn app.api.main:app`):
+  `GET /health`, `POST /logs`, `POST /day-close/{day}`, `GET /rank`.
+- **Tests:** 7 integration tests run against a throwaway `lifeos_test` DB on the lifeos-db
+  container (conftest provisions/seeds/drops it; pure scoring tests stay DB-free). Covers
+  log→close→read round-trip, idempotent re-close, recompute-from-logs, multi-day
+  accumulation, and season-reset peak-banking + recompute. `httpx` added to dev deps for
+  FastAPI's `TestClient`. 64 tests total green.
+- **Untouched (still deferred):** `floating_count`, severe-Sick, `expect_more`.
