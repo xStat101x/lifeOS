@@ -20,6 +20,16 @@ def test_reset_never_below_floor():
     assert soft_reset_lp(0.0, CFG) >= CFG.lp_floor
 
 
+def test_reset_never_promotes_a_below_midpoint_player():
+    """Invariant: a season mechanic cannot raise rank without performance."""
+    for old in (0.0, 250.0, 1000.0, CFG.ladder_midpoint_lp):
+        assert soft_reset_lp(old, CFG) <= old
+
+    # The fix must not wipe legitimate progress from a strong prior season.
+    strong = soft_reset_lp(2400.0, CFG)
+    assert CFG.ladder_midpoint_lp < strong < 2400.0
+
+
 def test_bank_peak_returns_rank():
     r = bank_peak(2650.0, CFG)  # Diamond II region (2600-2699)
     assert r.tier == "Diamond"

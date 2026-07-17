@@ -12,9 +12,15 @@ from app.scoring.ladder import Rank, lp_to_rank
 
 
 def soft_reset_lp(old_lp: float, cfg: ScoringConfig) -> float:
-    """new_lp = MIDPOINT + (old_lp - MIDPOINT) * reset_compression (§7.8)."""
+    """Compress toward midpoint, but never promote without performance.
+
+    The literal compression formula raises LP below the midpoint. Rank may only rise
+    from doing the thing, so a reset can demote an above-midpoint player or hold a
+    below-midpoint player; it can never increase LP.
+    """
     mid = cfg.ladder_midpoint_lp
-    new_lp = mid + (old_lp - mid) * cfg.reset_compression
+    compressed = mid + (old_lp - mid) * cfg.reset_compression
+    new_lp = min(old_lp, compressed)
     return max(cfg.lp_floor, new_lp)
 
 

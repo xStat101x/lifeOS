@@ -70,6 +70,31 @@ def xp_spendable(session: Session) -> int:
     return xp_lifetime(session) - xp_spent(session)
 
 
+def day_was_scored(session: Session, day: date) -> bool:
+    """Whether day-close has already materialized a result for this day.
+
+    Day evaluations cover ordinary scored targets; the day-close XP row also marks a
+    close with zero active targets. Either makes a later expectation change retroactive.
+    """
+    evaluation = (
+        session.query(DayEvaluation.id)
+        .filter(DayEvaluation.effective_day == day, DayEvaluation.deleted_at.is_(None))
+        .first()
+    )
+    if evaluation is not None:
+        return True
+    return (
+        session.query(XPLedger.id)
+        .filter(
+            XPLedger.effective_day == day,
+            XPLedger.event == "day_close",
+            XPLedger.deleted_at.is_(None),
+        )
+        .first()
+        is not None
+    )
+
+
 def mulligans_in_month(session: Session, day: date) -> int:
     """Count non-deleted mulligans whose effective_day is in the same calendar month."""
     return (
@@ -93,12 +118,13 @@ def spend_mulligan(
 ) -> MulliganResult:
     from app.adapter.queries import current_rank
 
-    # §9.1 / §8.3: mulligans are for PAST days; today/future is free via day-assignments.
-    if effective_day >= today:
+    # Planning today/future is free only before scoring. Once today is closed, changing
+    # its expectation is retroactive and must use this paid, never-win path.
+    if effective_day > today or (effective_day == today and not day_was_scored(session, today)):
         raise MulliganError(
             422,
-            f"{effective_day} is today or later; apply a mode for free instead — mulligans "
-            f"only reclassify a past day (today is {today}).",
+            f"{effective_day} has not been scored yet; apply a mode for free before "
+            f"day-close instead (today is {today}).",
         )
 
     # cost ladder + monthly cap (server-side, not just client-side)

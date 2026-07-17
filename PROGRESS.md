@@ -3,11 +3,15 @@
 High-signal map of where the build is and what's next. Details live in `DECISIONS.md`
 and `docs/SPEC.md` (§23 is the build sequence). This file is the orientation, not a log.
 
-## Current state — Phase 1 (server core) COMPLETE ✅
+## Current state — Phase 1 server core + invariant hardening (pending review)
 
-All committed and tested (`server/`, 64 tests green; run `docker compose up -d db` then
-`pytest`). Pure scoring tests need no DB; integration tests use a throwaway `lifeos_test`
-DB on the `lifeos-db` container.
+Committed core is at `e23fabd`; the invariant-hardening follow-up is implemented and
+awaiting owner review before commit. Run `docker compose up -d db` then `pytest`. Pure
+scoring tests need no DB; integration tests use a throwaway `lifeos_test` DB on the
+`lifeos-db` container.
+
+Current verification: **81 tests green** (58 pure + 23 integration/API); one pre-existing
+Starlette/httpx deprecation warning.
 
 - **Data model + migration** — full spec §6 schema (33 tables), Alembic (`migrations/`).
 - **Seed** — §22 data (domains, Morning Routine, starter habits/phases, 7 Day Modes,
@@ -22,6 +26,10 @@ DB on the `lifeos-db` container.
   as a recomputable cache (§20 inv. 4). Idempotent.
 - **API** (`app/api/main.py`) — `GET /health`, `POST /logs`, `POST /day-close/{day}`,
   `GET /rank`, `POST|GET /day-assignments` (Day Modes), `POST /mulligans` (§8.3 spend).
+- **Invariant hardening (pending review)** — season resets never promote; already-scored
+  days can be reclassified only through the paid/never-win mulligan path; replay respects
+  target expectation windows and includes silent scheduled days. Each has a regression
+  test that failed against `e23fabd` before the fix.
 
 ## Remaining build slices (ordered, per SPEC §23)
 
@@ -32,6 +40,8 @@ Server core is done. Left:
 - [x] **Mulligan spend API** — §8.3: `POST /mulligans` neutralizes a past day or applies a
       mode retroactively; server-side cost ladder + monthly cap; XP lifetime vs spendable;
       never a win. Unlocks the retroactive path the day-assignments endpoint gates.
+- [x] **Rank invariant hardening** — reset never promotes; scored-day modes require the
+      paid path; historical replay honors target expectation windows.
 - [ ] **Food quick-log API** — manual + one-tap re-log; photo endpoint stubbed (agent is
       Slice 3).
 - [ ] **iOS app** — Swift/SwiftUI shell, on-device SQLite (GRDB) mirror, sync queue,
@@ -60,3 +70,7 @@ Server core is done. Left:
 - Adapter: store the active `ScoringConfig`/version in DB; full timezone handling for
   timing windows (currently wall-clock of `logged_at`); `rank_peaks` for `habit` scope.
 - Scoring constants are **Season-1 tunables** — recalibrate after living one reset (§25).
+- Known review findings and their scheduled owning slices are recorded in `DECISIONS.md`
+  under “Known findings — scheduled, not fixed in this slice.” Phase-2 iOS sync owns the
+  client UUID/dedupe contract, DB uniqueness/idempotency constraints, and ingestion
+  validation group.

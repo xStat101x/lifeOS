@@ -144,12 +144,46 @@ def test_today_or_future_is_not_a_mulligan(client, db):
     _pin_today(client, date(2026, 9, 15))
     _seed_range(db, date(2026, 8, 20), 10)
     client.post("/day-close/2026-08-29")
-    # 2026-09-15 is "today" -> mulligan is the wrong tool (apply a mode for free instead)
+    # Unscored 2026-09-15 is "today" -> plan a mode for free instead.
     r = client.post("/mulligans", json={"effective_day": "2026-09-15"})
     assert r.status_code == 422
 
 
 # 6 --------------------------------------------------------------------------------
+def test_scored_today_mode_requires_a_paid_mulligan_and_never_wins(client, db):
+    """A scored today is retroactive; only the paid, never-win path may change it."""
+    today = date(2026, 9, 6)
+    _pin_today(client, today)
+    _seed_range(db, date(2026, 8, 20), 17)
+    client.post("/day-close/2026-09-05")
+    lp_before = _nutrition_lp(client)
+
+    ids, user_id = _ids(db), db.query(User).first().id
+    _seed_day(db, ids, user_id, today, protein=96, calories=None,
+              wake=False, brush=False)
+    db.commit()
+    client.post(f"/day-close/{today.isoformat()}")
+    lp_missed = _nutrition_lp(client)
+    assert lp_missed < lp_before
+
+    travel = _mode_id(db, "Travel")
+    direct = client.post(
+        "/day-assignments",
+        json={"effective_day": today.isoformat(), "day_mode_id": travel},
+    )
+    assert direct.status_code == 409
+
+    paid = client.post(
+        "/mulligans",
+        json={"effective_day": today.isoformat(), "mode_id": travel},
+    )
+    assert paid.status_code == 201
+    assert paid.json()["kind"] == "retroactive_mode"
+    assert _nutrition_lp(client) <= lp_before + 1e-6
+    assert _nutrition_lp(client) > lp_missed
+
+
+# 7 --------------------------------------------------------------------------------
 def test_mulligan_survives_cache_wipe_recompute(client, db):
     _pin_today(client, date(2026, 9, 15))
     _seed_range(db, date(2026, 8, 20), 17)

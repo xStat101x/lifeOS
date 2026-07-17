@@ -310,3 +310,52 @@ Format: **[date] — decision — rationale / where.**
 - **Tests:** 6 new (`test_mulligan_api.py`) — neutralize a losing day, monthly-cap blocks
   the 4th, retroactive-mode-only-when-paid + never-a-win, insufficient XP, today/future
   rejected, cache-wipe recompute. **76 tests total green.**
+
+---
+
+## Phase 1 — Scoring invariant hardening (review follow-up)
+
+- **2026-07-17 — A season reset may demote or hold, never promote.** Literal compression
+  toward the 1400 midpoint raised every below-midpoint player (including 0 → 910) without
+  performance. `soft_reset_lp` now caps the compressed result at `old_lp`. Above-midpoint
+  players still retain legitimate progress above the midpoint after compression; the fix
+  does not wipe or over-punish strong seasons.
+- **2026-07-17 — “Already scored” is the retroactivity boundary for Day Modes.** A mode
+  planned before day-close remains free for today/future. Once the day has a day-close
+  evaluation/ledger marker, direct `POST /day-assignments` is rejected even if it is still
+  today. Reclassification then uses the existing paid `POST /mulligans` path and its
+  replay-time `clamp_never_win`; no parallel forgiveness path was added.
+- **2026-07-17 — Replay uses historical expectation windows, not current active config.**
+  Habits/systems are loaded even after removal, begin on `created_at`, and stop at the
+  exclusive `deleted_at` boundary or (for `active=false`) `updated_at`. Quantitative
+  habits are expected only while a target phase is active. Replay begins at the earliest
+  scheduled expectation, including silent/unlogged days, so adding or removing a target
+  cannot rewrite rank before that config change took effect.
+- **Tests:** 5 invariant regressions added across season math, Day Mode/mulligan API, and
+  adapter replay. Each was run red against `e23fabd` before its fix; **81 tests total green.**
+
+### Known findings — scheduled, not fixed in this slice
+
+- **Server scoring/recompute follow-up:** historical out-of-order day-close currently
+  overwrites present `rank_state`/`account_level` while replacing evaluations only for the
+  requested day; corrected historical inputs therefore need downstream cache propagation.
+  `rank_peaks` are monotonic and likewise cannot currently correct downward without a
+  cache wipe. Schedule with the authoritative recompute/cache-coherence pass.
+- **Season read/replay follow-up:** pre-first-season dates currently resolve into the first
+  season, replay ignores the per-row `Season.reset_compression`, and `/rank` chooses the
+  latest configured season rather than the effective/most recently scored one. Schedule
+  with season lifecycle hardening.
+- **Scoring follow-up:** new-habit grace clamps negative gain but still charges normalized
+  domain decay; an early miss is therefore not fully cost-free at nonzero LP. Schedule
+  with the next scoring-calibration pass (mass-scaled decay itself remains deliberate).
+- **XP follow-up:** adapter aggregation awards base XP per target/day rather than per
+  qualifying log, and unscheduled work is dropped before bonus XP calculation. Schedule
+  with the fitness/bonus capture slice.
+- **Config validation follow-up:** missing/nonpositive quantitative targets and unchecked
+  negative Day Mode factors can manufacture invalid completion/gain behavior. Schedule
+  validation with the Day Mode/config editing surface.
+- **Phase-2 iOS sync work (grouped):** creation APIs must accept client-generated UUIDs
+  and expose sync timestamps/deletion state; retries need UUID dedupe semantics; logical
+  cache keys need database uniqueness constraints so concurrent day-close retries remain
+  idempotent; and log ingestion must validate target references, kinds, units, sources,
+  and value semantics instead of acknowledging unusable or dimensionally mixed events.

@@ -83,20 +83,14 @@ class World:
         domain_id_by_key = {d.key: d.id for d in domains}
         domain_weight = {d.key: d.weight for d in domains}
 
-        habits = (
-            session.query(Habit)
-            .filter(Habit.active.is_(True), Habit.deleted_at.is_(None))
-            .all()
-        )
+        # Load historical config too. Per-day expectation windows below decide whether a
+        # target participates; filtering to today's active rows would rewrite old rank.
+        habits = session.query(Habit).all()
         phases_by_habit: dict[uuid.UUID, list[HabitPhase]] = defaultdict(list)
         for p in session.query(HabitPhase).filter(HabitPhase.deleted_at.is_(None)).all():
             phases_by_habit[p.habit_id].append(p)
 
-        systems = (
-            session.query(System)
-            .filter(System.active.is_(True), System.deleted_at.is_(None))
-            .all()
-        )
+        systems = session.query(System).all()
         steps_by_system: dict[uuid.UUID, list[SystemStep]] = defaultdict(list)
         for s in session.query(SystemStep).filter(SystemStep.deleted_at.is_(None)).all():
             steps_by_system[s.system_id].append(s)
@@ -160,18 +154,79 @@ class World:
     def is_retroactive(self, day: date) -> bool:
         return day in self.retroactive_days
 
-    # --- domains actually scored (have >=1 active habit or system) -------------
-    def scored_domain_keys(self) -> list[str]:
-        keys = {self.domain_key[h.domain_id] for h in self.habits}
-        keys |= {self.domain_key[s.domain_id] for s in self.systems}
+    # --- historical expectation windows -------------------------------------------
+    @staticmethod
+    def _created_day(target: Habit | System) -> date:
+        return target.created_at.date()
+
+    @staticmethod
+    def _inactive_from(target: Habit | System) -> date | None:
+        """First day a currently removed target is no longer expected.
+
+        Phase 1 has timestamped config rows rather than a separate activation ledger:
+        soft deletion supplies the removal timestamp, while ``updated_at`` supplies it
+        when ``active`` is switched off. The boundary is exclusive.
+        """
+        if target.deleted_at is not None:
+            return target.deleted_at.date()
+        if not target.active:
+            return target.updated_at.date()
+        return None
+
+    def _target_active_on(self, target: Habit | System, day: date) -> bool:
+        if day < self._created_day(target):
+            return False
+        inactive_from = self._inactive_from(target)
+        return inactive_from is None or day < inactive_from
+
+    def _habit_expected_on(self, habit: Habit, day: date) -> bool:
+        if not self._target_active_on(habit, day) or not self._habit_scheduled(habit, day):
+            return False
+        # A quantitative habit has no expectation during a gap between target phases.
+        return habit.kind != "quantitative" or self._phase_for(habit, day) is not None
+
+    def _system_expected_on(self, system: System, day: date) -> bool:
+        return self._target_active_on(system, day)  # systems are daily in Phase 1
+
+    def _first_expectation(self, target: Habit | System, upto: date) -> date | None:
+        day = self._created_day(target)
+        inactive_from = self._inactive_from(target)
+        last = min(upto, inactive_from - date.resolution) if inactive_from else upto
+        while day <= last:
+            expected = (
+                self._habit_expected_on(target, day)
+                if isinstance(target, Habit)
+                else self._system_expected_on(target, day)
+            )
+            if expected:
+                return day
+            day += date.resolution
+        return None
+
+    # --- domains actually scored (have >=1 expectation through the replay day) ----
+    def scored_domain_keys(self, upto: date) -> list[str]:
+        keys = {
+            self.domain_key[h.domain_id]
+            for h in self.habits
+            if self._first_expectation(h, upto) is not None
+        }
+        keys |= {
+            self.domain_key[s.domain_id]
+            for s in self.systems
+            if self._first_expectation(s, upto) is not None
+        }
         return sorted(keys)
 
-    def weights(self) -> dict[str, float]:
-        return {k: self.domain_weight[k] for k in self.scored_domain_keys()}
+    def weights(self, upto: date) -> dict[str, float]:
+        return {k: self.domain_weight[k] for k in self.scored_domain_keys(upto)}
 
     def history_start(self, upto: date) -> date:
-        logged = [d for d in self.logs_by_day if d <= upto]
-        return min(logged) if logged else upto
+        starts = [
+            start
+            for target in [*self.habits, *self.systems]
+            if (start := self._first_expectation(target, upto)) is not None
+        ]
+        return min(starts) if starts else upto
 
     def season_for(self, day: date) -> Season | None:
         containing = [s for s in self.seasons if s.start_day <= day <= s.end_day]
@@ -191,11 +246,15 @@ class World:
             return _WEEKDAY_CODES[day.weekday()] in (habit.schedule_config or {}).get("days", [])
         return False  # 'floating_count' (deferred) or unknown
 
-    def _phase_target(self, habit: Habit, day: date) -> float | None:
+    def _phase_for(self, habit: Habit, day: date) -> HabitPhase | None:
         for p in self.phases_by_habit.get(habit.id, []):
             if p.effective_from <= day and (p.effective_to is None or p.effective_to >= day):
-                return p.target_value
+                return p
         return None
+
+    def _phase_target(self, habit: Habit, day: date) -> float | None:
+        phase = self._phase_for(habit, day)
+        return phase.target_value if phase is not None else None
 
     def day_mode(self, day: date) -> DayMode | None:
         mode_id = self.assignment_by_day.get(day)
@@ -223,7 +282,7 @@ class World:
 
         # habits scheduled that day
         for h in self.habits:
-            if not self._habit_scheduled(h, day):
+            if not self._habit_expected_on(h, day):
                 continue
             hid = str(h.id)
             specs[hid] = HabitSpec(
@@ -233,8 +292,10 @@ class World:
             )
             obs[hid] = self._habit_obs(h, day_logs)
 
-        # active systems are scheduled daily (Phase 1 assumption)
+        # Systems are scheduled daily inside their historical expectation window.
         for s in self.systems:
+            if not self._system_expected_on(s, day):
+                continue
             sid = str(s.id)
             steps = self.steps_by_system.get(s.id, [])
             specs[sid] = HabitSpec(

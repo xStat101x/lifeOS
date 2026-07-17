@@ -42,8 +42,8 @@ def _replay(world: World, cfg: ScoringConfig, upto: date):
     pre-reset peak of an ending season is banked exactly as the replay crosses it (§7.8) —
     not re-derived on the fly, so it stays correct even if replay is later optimized.
     """
-    domains = world.scored_domain_keys()
-    weights = world.weights()
+    domains = world.scored_domain_keys(upto)
+    weights = world.weights(upto)
     eng = Engine(habits={}, domains=domains, cfg=cfg)
     peaks: dict[tuple, float] = {}
 

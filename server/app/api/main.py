@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.adapter.day_close import close_day
-from app.adapter.mulligan import MulliganError, spend_mulligan
+from app.adapter.mulligan import MulliganError, day_was_scored, spend_mulligan
 from app.adapter.queries import current_rank
 from app.db import get_session
 from app.models import DayAssignment, DayMode as DayModeModel, Log, User
@@ -113,14 +113,16 @@ def create_day_assignment(
     mode = session.get(DayModeModel, body.day_mode_id)
     if mode is None:
         raise HTTPException(404, "day_mode not found")
-    # §9.1 anti-exploit: applying a mode to today/future is free; reclassifying a PAST day
-    # (which may already have scored) is the mulligan path — not wired yet, so reject it.
-    if body.effective_day < today:
+    # Planning today/future before scoring is free. Once a day has been closed, changing
+    # its expectation is retroactive even if it is still "today" and must use the paid,
+    # never-win mulligan path.
+    already_scored = day_was_scored(session, body.effective_day)
+    if body.effective_day < today or already_scored:
         raise HTTPException(
             409,
-            f"Retroactive mode application to {body.effective_day} (before today {today}) "
-            f"requires a mulligan (§9.1); mulligan-spend isn't supported yet. Applying to "
-            f"today or a future day is free.",
+            f"Retroactive mode application to {body.effective_day} requires a paid "
+            f"mulligan (§9.1). Applying to today or a future day is free only before "
+            f"that day has been scored (today is {today}).",
         )
     # A day has one active mode: soft-delete any existing assignment, then insert.
     existing = (
