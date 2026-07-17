@@ -19,9 +19,15 @@ from sqlalchemy.orm import Session
 from app.adapter.day_close import close_day
 from app.adapter.queries import current_rank
 from app.db import get_session
-from app.models import Log, User
+from app.models import DayAssignment, DayMode as DayModeModel, Log, User
 
 app = FastAPI(title="LifeOS", version="0.1.0")
+
+
+def get_today() -> date:
+    """The reference 'today' for the §9.1 anti-exploit rule. A dependency so tests can
+    pin it deterministically."""
+    return date.today()
 
 
 class LogIn(BaseModel):
@@ -79,3 +85,76 @@ def day_close(day: date, session: Session = Depends(get_session)) -> dict:
 @app.get("/rank")
 def rank(session: Session = Depends(get_session)) -> dict:
     return current_rank(session)
+
+
+# --- Day Modes (§9) ---------------------------------------------------------------
+
+class DayAssignmentIn(BaseModel):
+    effective_day: date
+    day_mode_id: uuid.UUID
+    source: str = "manual"                # 'scheduled' | 'manual' | 'calendar_suggested'
+
+
+class DayAssignmentOut(BaseModel):
+    id: uuid.UUID
+    effective_day: date
+    day_mode_id: uuid.UUID
+    mode_name: str
+    source: str
+
+
+@app.post("/day-assignments", response_model=DayAssignmentOut, status_code=201)
+def create_day_assignment(
+    body: DayAssignmentIn,
+    session: Session = Depends(get_session),
+    today: date = Depends(get_today),
+) -> DayAssignmentOut:
+    mode = session.get(DayModeModel, body.day_mode_id)
+    if mode is None:
+        raise HTTPException(404, "day_mode not found")
+    # §9.1 anti-exploit: applying a mode to today/future is free; reclassifying a PAST day
+    # (which may already have scored) is the mulligan path — not wired yet, so reject it.
+    if body.effective_day < today:
+        raise HTTPException(
+            409,
+            f"Retroactive mode application to {body.effective_day} (before today {today}) "
+            f"requires a mulligan (§9.1); mulligan-spend isn't supported yet. Applying to "
+            f"today or a future day is free.",
+        )
+    # A day has one active mode: soft-delete any existing assignment, then insert.
+    existing = (
+        session.query(DayAssignment)
+        .filter(DayAssignment.effective_day == body.effective_day,
+                DayAssignment.deleted_at.is_(None))
+        .all()
+    )
+    for row in existing:
+        row.deleted_at = datetime.now(timezone.utc)
+    assignment = DayAssignment(
+        effective_day=body.effective_day, day_mode_id=mode.id, source=body.source,
+        is_retroactive=False, applied_at=datetime.now(timezone.utc),
+    )
+    session.add(assignment)
+    session.commit()
+    return DayAssignmentOut(id=assignment.id, effective_day=assignment.effective_day,
+                            day_mode_id=mode.id, mode_name=mode.name, source=assignment.source)
+
+
+@app.get("/day-assignments", response_model=list[DayAssignmentOut])
+def list_day_assignments(
+    start: date | None = None,
+    end: date | None = None,
+    session: Session = Depends(get_session),
+) -> list[DayAssignmentOut]:
+    q = session.query(DayAssignment).filter(DayAssignment.deleted_at.is_(None))
+    if start is not None:
+        q = q.filter(DayAssignment.effective_day >= start)
+    if end is not None:
+        q = q.filter(DayAssignment.effective_day <= end)
+    rows = q.order_by(DayAssignment.effective_day).all()
+    names = {m.id: m.name for m in session.query(DayModeModel).all()}
+    return [
+        DayAssignmentOut(id=r.id, effective_day=r.effective_day, day_mode_id=r.day_mode_id,
+                         mode_name=names.get(r.day_mode_id, ""), source=r.source)
+        for r in rows
+    ]

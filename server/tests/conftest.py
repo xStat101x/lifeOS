@@ -81,8 +81,16 @@ def db(provision_db):
 
 @pytest.fixture
 def client(db):
+    from datetime import date
+
     from fastapi.testclient import TestClient
 
-    from app.api.main import app
+    from app.api.main import app, get_today
 
-    return TestClient(app)
+    # Pin "today" so the §9.1 retroactive rule is deterministic regardless of wall clock.
+    # Test days at/after 2026-08-20 (Season 1 start) are "today or future" => free.
+    app.dependency_overrides[get_today] = lambda: date(2026, 8, 20)
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.clear()

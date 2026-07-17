@@ -246,3 +246,30 @@ Format: **[date] — decision — rationale / where.**
   accumulation, and season-reset peak-banking + recompute. `httpx` added to dev deps for
   FastAPI's `TestClient`. 64 tests total green.
 - **Untouched (still deferred):** `floating_count`, severe-Sick, `expect_more`.
+
+---
+
+## Phase 1 — Day Modes over the API (§9)
+
+- **2026-07-17 — `POST` / `GET /day-assignments`.** Apply a Day Mode to a day and list
+  assignments. Day-close already honored assignments (the loader builds the pure `DayMode`
+  from `day_assignments` + overrides and the engine resolves the `ModeEffect`), so this
+  slice is the API + persistence around it — the engine and adapter were not changed.
+- **One active mode per day:** applying a mode **soft-deletes** any existing assignment for
+  that day, then inserts (a day resolves to a single mode). `GET` filters `deleted_at`.
+- **§9.1 anti-exploit — retroactive rejected (409).** Applying a mode to **today or a
+  future day is free**; applying to a **past day** (`effective_day < today`) is the mulligan
+  path, which isn't wired yet, so it's rejected with a clear error naming the mulligan
+  requirement. Actual mulligan-spend + the retroactive-apply path is its own later slice.
+- **"Today" is a `get_today` FastAPI dependency** (returns `date.today()`), overridable in
+  tests so the retroactive rule is deterministic regardless of wall clock (pinned to
+  2026-08-20 = Season 1 start in the test client).
+- **Verified overrides change scoring** (integration, against the container): *Travel*
+  pauses Fitness (workout eval `was_paused`, domain LP unchanged) and scales Protein ×0.6
+  (96 g → completion 1.0 instead of 0.6); *Weekend* neutralizes Wake-time timing (eval
+  `timing` becomes `None` instead of 0.0); *Sick* scales targets ×0.5 (80 g → completion
+  1.0). Each asserts the before (no mode) vs after (mode applied + re-close). The eval also
+  records `applied_mode_id`.
+- **Tests:** 6 new (`test_daymode_api.py`) — apply/list/replace, retroactive 409, unknown
+  mode 404, and the three override behaviors. **70 tests total green.**
+- **`PROGRESS.md` added** at repo root: current state + ordered remaining slices per §23.
